@@ -1,0 +1,7 @@
+*.exe
+*.obj
+*.ilk
+*.pdb
+*.exp
+*.log
+cl_opts.txt
