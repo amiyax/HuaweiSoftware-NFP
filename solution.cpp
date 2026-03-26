@@ -117,12 +117,8 @@ pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
 
     if (!has_overlap) return {false, Vec2(0, 0)};
 
-    // Ensure MTV direction is from A to B
-    Vec2 dir = B.get_center() - A.get_center();
-    if (min_axis.dot(dir) < 0) {
-        min_axis = min_axis * -1;
-    }
-
+    // min_axis already points in the separation direction
+    // MTV = axis * overlap (axis is already normalized)
     return {true, min_axis * min_overlap};
 }
 
