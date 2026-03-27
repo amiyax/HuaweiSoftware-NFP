@@ -13,50 +13,38 @@ const int OUTPUT_PRECISION = 5;
 struct Vec2 {
     double x, y;
     Vec2(double x_ = 0, double y_ = 0) : x(x_), y(y_) {}
-
     Vec2 operator+(const Vec2& o) const { return Vec2(x + o.x, y + o.y); }
     Vec2 operator-(const Vec2& o) const { return Vec2(x - o.x, y - o.y); }
     Vec2 operator*(double s) const { return Vec2(x * s, y * s); }
     Vec2 operator-() const { return Vec2(-x, -y); }
-
     double dot(const Vec2& o) const { return x * o.x + y * o.y; }
     double cross(const Vec2& o) const { return x * o.y - y * o.x; }
-
     double length() const { return sqrt(x * x + y * y); }
     double length_sq() const { return x * x + y * y; }
-
     Vec2 normalize() const {
         double len = length();
-        if (len < EPS) return Vec2(0, 0);
-        return Vec2(x / len, y / len);
+        return len < EPS ? Vec2(0, 0) : Vec2(x / len, y / len);
     }
-
     Vec2 perp() const { return Vec2(-y, x); }
 };
 
 struct Polygon {
     vector<Vec2> v;
-
     Polygon() {}
     explicit Polygon(const vector<Vec2>& verts) : v(verts) {}
-
     int size() const { return (int)v.size(); }
     bool empty() const { return v.empty(); }
-
     Vec2 operator[](int i) const { return v[i]; }
-
     Vec2 get_center() const {
         if (v.empty()) return Vec2(0, 0);
         double cx = 0, cy = 0;
         for (const auto& p : v) { cx += p.x; cy += p.y; }
         return Vec2(cx / v.size(), cy / v.size());
     }
-
     pair<Vec2, Vec2> edge(int i) const {
         int n = size();
         return {v[i], v[(i + 1) % n]};
     }
-
     Polygon translate(const Vec2& t) const {
         vector<Vec2> nv;
         nv.reserve(size());
@@ -65,61 +53,23 @@ struct Polygon {
     }
 };
 
-// SAT-based MTV computation - correct for BOTH convex and concave polygons
-// Key: we check ALL edges from BOTH polygons without any decomposition
-pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
-    double min_overlap = numeric_limits<double>::infinity();
-    Vec2 min_axis(0, 0);
-    bool has_overlap = false;
-
-    const Polygon* polys[2] = {&A, &B};
-
-    for (int pi = 0; pi < 2; ++pi) {
-        const Polygon& poly = *polys[pi];
-        int n = poly.size();
-        for (int i = 0; i < n; ++i) {
-            auto [p1, p2] = poly.edge(i);
-            Vec2 axis = (p2 - p1).perp().normalize();
-            if (axis.length_sq() < EPS * EPS) continue;
-
-            // Project A onto axis
-            double min_a = numeric_limits<double>::infinity();
-            double max_a = -numeric_limits<double>::infinity();
-            for (const Vec2& p : A.v) {
-                double proj = p.dot(axis);
-                min_a = min(min_a, proj);
-                max_a = max(max_a, proj);
-            }
-
-            // Project B onto axis
-            double min_b = numeric_limits<double>::infinity();
-            double max_b = -numeric_limits<double>::infinity();
-            for (const Vec2& p : B.v) {
-                double proj = p.dot(axis);
-                min_b = min(min_b, proj);
-                max_b = max(max_b, proj);
-            }
-
-            // Check separation
-            if (max_a <= min_b || max_b <= min_a) {
-                return {false, Vec2(0, 0)};
-            }
-
-            // Overlap amount
-            double overlap = min(max_a, max_b) - max(min_a, min_b);
-            if (overlap < min_overlap) {
-                min_overlap = overlap;
-                min_axis = axis;
-                has_overlap = true;
-            }
+// Check if polygon is convex
+bool is_convex(const Polygon& poly) {
+    int n = poly.size();
+    if (n < 3) return false;
+    int sign = 0;
+    for (int i = 0; i < n; ++i) {
+        Vec2 a = poly[i];
+        Vec2 b = poly[(i + 1) % n];
+        Vec2 c = poly[(i + 2) % n];
+        double cr = (b - a).cross(c - b);
+        if (fabs(cr) > EPS) {
+            int s = cr > 0 ? 1 : -1;
+            if (sign == 0) sign = s;
+            else if (sign != s) return false;
         }
     }
-
-    if (!has_overlap) return {false, Vec2(0, 0)};
-
-    // min_axis already points in the separation direction
-    // MTV = axis * overlap (axis is already normalized)
-    return {true, min_axis * min_overlap};
+    return true;
 }
 
 // Point in polygon (ray casting)
@@ -155,11 +105,10 @@ pair<double, Vec2> point_to_segment(const Vec2& p, const Vec2& a, const Vec2& b)
 }
 
 // Distance from point to polygon boundary
-pair<double, Vec2> point_to_polygon(const Vec2& p, const Polygon& poly) {
+pair<double, Vec2> point_to_polygon_boundary(const Vec2& p, const Polygon& poly) {
     double min_dist = numeric_limits<double>::infinity();
     Vec2 min_dir(0, 0);
     int n = poly.size();
-
     for (int i = 0; i < n; ++i) {
         auto [a, b] = poly.edge(i);
         auto [d, dir] = point_to_segment(p, a, b);
@@ -168,13 +117,139 @@ pair<double, Vec2> point_to_polygon(const Vec2& p, const Polygon& poly) {
             min_dir = dir;
         }
     }
-
     return {min_dist, min_dir};
 }
 
-// Build NFP for convex polygons: A ⊕ (-B)
-Polygon build_nfp(const Polygon& A, const Polygon& B) {
-    // Sort vertices by polar angle around centroid
+// SAT overlap check
+bool polygons_overlap(const Polygon& A, const Polygon& B) {
+    const Polygon* polys[2] = {&A, &B};
+    for (int pi = 0; pi < 2; ++pi) {
+        const Polygon& poly = *polys[pi];
+        int n = poly.size();
+        for (int i = 0; i < n; ++i) {
+            auto [p1, p2] = poly.edge(i);
+            Vec2 axis = (p2 - p1).perp().normalize();
+            if (axis.length_sq() < EPS * EPS) continue;
+
+            double min_a = numeric_limits<double>::infinity();
+            double max_a = -numeric_limits<double>::infinity();
+            for (const Vec2& p : A.v) {
+                double proj = p.dot(axis);
+                min_a = min(min_a, proj);
+                max_a = max(max_a, proj);
+            }
+            double min_b = numeric_limits<double>::infinity();
+            double max_b = -numeric_limits<double>::infinity();
+            for (const Vec2& p : B.v) {
+                double proj = p.dot(axis);
+                min_b = min(min_b, proj);
+                max_b = max(max_b, proj);
+            }
+            if (max_a <= min_b || max_b <= min_a) return false;
+        }
+    }
+    return true;
+}
+
+// SAT MTV for convex polygons
+pair<bool, Vec2> compute_mtv_convex(const Polygon& A, const Polygon& B) {
+    double min_overlap = numeric_limits<double>::infinity();
+    Vec2 min_axis(0, 0);
+    bool has_overlap = false;
+
+    const Polygon* polys[2] = {&A, &B};
+    for (int pi = 0; pi < 2; ++pi) {
+        const Polygon& poly = *polys[pi];
+        int n = poly.size();
+        for (int i = 0; i < n; ++i) {
+            auto [p1, p2] = poly.edge(i);
+            Vec2 axis = (p2 - p1).perp().normalize();
+            if (axis.length_sq() < EPS * EPS) continue;
+
+            double min_a = numeric_limits<double>::infinity();
+            double max_a = -numeric_limits<double>::infinity();
+            for (const Vec2& p : A.v) {
+                double proj = p.dot(axis);
+                min_a = min(min_a, proj);
+                max_a = max(max_a, proj);
+            }
+            double min_b = numeric_limits<double>::infinity();
+            double max_b = -numeric_limits<double>::infinity();
+            for (const Vec2& p : B.v) {
+                double proj = p.dot(axis);
+                min_b = min(min_b, proj);
+                max_b = max(max_b, proj);
+            }
+            if (max_a <= min_b || max_b <= min_a) return {false, Vec2(0, 0)};
+            double overlap = min(max_a, max_b) - max(min_a, min_b);
+            if (overlap < min_overlap) {
+                min_overlap = overlap;
+                min_axis = axis;
+                has_overlap = true;
+            }
+        }
+    }
+    if (!has_overlap) return {false, Vec2(0, 0)};
+    return {true, min_axis * min_overlap};
+}
+
+// Ear clipping decomposition for concave polygons
+vector<Polygon> decompose_concave(const Polygon& poly) {
+    vector<Polygon> result;
+    if (poly.size() <= 3) {
+        if (poly.size() == 3) result.push_back(poly);
+        return result;
+    }
+
+    vector<Vec2> verts = poly.v;
+    int n = verts.size();
+
+    while (n > 3) {
+        bool ear_found = false;
+        for (int i = 0; i < n; ++i) {
+            int prev = (i - 1 + n) % n;
+            int next = (i + 1) % n;
+            Vec2 a = verts[prev];
+            Vec2 b = verts[i];
+            Vec2 c = verts[next];
+
+            double cross = (b - a).cross(c - b);
+            if (cross <= EPS) continue;
+
+            bool empty = true;
+            for (int j = 0; j < n; ++j) {
+                if (j == prev || j == i || j == next) continue;
+                Vec2 p = verts[j];
+                double s1 = (b - a).cross(p - a);
+                double s2 = (c - b).cross(p - b);
+                double s3 = (a - c).cross(p - c);
+                if ((s1 > 0 && s2 > 0 && s3 > 0) || (s1 < 0 && s2 < 0 && s3 < 0)) {
+                    empty = false;
+                    break;
+                }
+            }
+
+            if (empty) {
+                result.push_back(Polygon({a, b, c}));
+                vector<Vec2> new_verts;
+                for (int j = 0; j < n; ++j) {
+                    if (j != i) new_verts.push_back(verts[j]);
+                }
+                verts = move(new_verts);
+                n--;
+                ear_found = true;
+                break;
+            }
+        }
+        if (!ear_found) break;
+    }
+
+    if (n >= 3) result.push_back(Polygon(verts));
+    return result.empty() ? vector<Polygon>{poly} : result;
+}
+
+// Minkowski sum for convex polygons: A ⊕ (-B)
+Polygon minkowski_sum(const Polygon& A, const Polygon& B) {
     auto sort_by_angle = [](const Polygon& poly) {
         Vec2 center = poly.get_center();
         vector<pair<double, int>> idx;
@@ -192,129 +267,90 @@ Polygon build_nfp(const Polygon& A, const Polygon& B) {
     vector<Vec2> sortedB = sort_by_angle(B);
     int n = sortedA.size(), m = sortedB.size();
 
-    // Minkowski sum traversal: NFP = A ⊕ (-B)
-    vector<Vec2> nfp;
+    vector<Vec2> result;
     int i = 0, j = 0;
     while (true) {
-        nfp.push_back(sortedA[i % n] + (-sortedB[j % m]));
-
+        result.push_back(sortedA[i % n] + (-sortedB[j % m]));
         Vec2 tangA = sortedA[(i + 1) % n] - sortedA[i % n];
         Vec2 tangB = sortedB[(j + 1) % m] - sortedB[j % m];
         double cross = tangA.cross(tangB);
-
-        if (fabs(cross) < EPS) {
-            i++; j++;
-        } else if (cross > 0) {
-            j++;
-        } else {
-            i++;
-        }
-
+        if (fabs(cross) < EPS) { i++; j++; }
+        else if (cross > 0) { j++; }
+        else { i++; }
         if (i >= n && j >= m) break;
     }
 
-    // Remove duplicate consecutive points
     vector<Vec2> uniq;
-    for (const Vec2& p : nfp) {
+    for (const Vec2& p : result) {
         if (uniq.empty() || (p - uniq.back()).length_sq() > EPS * EPS) {
             uniq.push_back(p);
         }
     }
-
     return Polygon(uniq);
 }
 
-// True convex hull for polygon
-Polygon convex_hull(Polygon poly) {
-    if (poly.size() <= 3) return poly;
+// Compute MTV for potentially concave polygons using SAT
+// For concave polygons, SAT gives correct overlap detection but
+// we need to find the TRUE MTV direction by checking edge projections
+pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
+    // Quick check: if either is concave, use detailed analysis
+    if (!is_convex(A) || !is_convex(B)) {
+        // Decompose and check overlap between convex parts
+        vector<Polygon> decompA = decompose_concave(A);
+        vector<Polygon> decompB = decompose_concave(B);
 
-    auto cross = [](const Vec2& O, const Vec2& A, const Vec2& B) {
-        return (A - O).cross(B - O);
-    };
+        double best_overlap = numeric_limits<double>::infinity();
+        Vec2 best_axis(0, 0);
+        bool any_overlap = false;
 
-    sort(poly.v.begin(), poly.v.end(), [](const Vec2& a, const Vec2& b) {
-        return a.x < b.x || (a.x == b.x && a.y < b.y);
-    });
-
-    vector<Vec2> lower, upper;
-    for (const Vec2& p : poly.v) {
-        while (lower.size() >= 2 && cross(lower[lower.size()-2], lower.back(), p) <= 0) {
-            lower.pop_back();
+        // Check all pairs of convex parts
+        for (const Polygon& Ai : decompA) {
+            for (const Polygon& Bj : decompB) {
+                auto [has_ov, mtv] = compute_mtv_convex(Ai, Bj);
+                if (!has_ov) continue;
+                any_overlap = true;
+                double ov = mtv.length();
+                if (ov < best_overlap) {
+                    best_overlap = ov;
+                    best_axis = ov > EPS ? mtv.normalize() : Vec2(0, 0);
+                }
+            }
         }
-        lower.push_back(p);
-    }
-    for (int i = (int)poly.v.size() - 1; i >= 0; i--) {
-        const Vec2& p = poly.v[i];
-        while (upper.size() >= 2 && cross(upper[upper.size()-2], upper.back(), p) <= 0) {
-            upper.pop_back();
-        }
-        upper.push_back(p);
+
+        if (!any_overlap) return {false, Vec2(0, 0)};
+        return {true, best_axis * best_overlap};
     }
 
-    lower.pop_back();
-    upper.pop_back();
-    lower.insert(lower.end(), upper.begin(), upper.end());
-    return Polygon(lower);
+    return compute_mtv_convex(A, B);
 }
 
-// Check if polygon is convex
-bool is_convex(const Polygon& poly) {
-    int n = poly.size();
-    if (n < 3) return false;
-    int sign = 0;
-    for (int i = 0; i < n; ++i) {
-        Vec2 a = poly[i];
-        Vec2 b = poly[(i + 1) % n];
-        Vec2 c = poly[(i + 2) % n];
-        double cr = (b - a).cross(c - b);
-        if (fabs(cr) > EPS) {
-            int s = cr > 0 ? 1 : -1;
-            if (sign == 0) sign = s;
-            else if (sign != s) return false;
-        }
-    }
-    return true;
-}
-
-// MTV Solver
+// MTV Solver with preprocessing
 class MTVSolver {
 public:
     Polygon polyA, polyB;
-    Polygon nfp;  // NFP for convex polygons
-    bool has_nfp;
+    bool a_convex, b_convex;
+    vector<Polygon> decompA, decompB;
 
     MTVSolver(const Polygon& A, const Polygon& B) : polyA(A), polyB(B) {
-        if (is_convex(A) && is_convex(B)) {
-            nfp = build_nfp(A, B);
-            has_nfp = nfp.size() >= 3;
-        } else {
-            has_nfp = false;
-        }
+        a_convex = is_convex(A);
+        b_convex = is_convex(B);
+        if (!a_convex) decompA = decompose_concave(A);
+        if (!b_convex) decompB = decompose_concave(B);
     }
 
     Vec2 solve(const Vec2& displacement) {
         Polygon B_shifted = polyB.translate(displacement);
 
-        if (has_nfp) {
-            // NFP method: check if displacement is inside NFP
-            // NFP boundary = positions where A and B are in contact
-            // Inside NFP = overlap, MTV = to boundary
-            if (point_in_polygon(displacement, nfp)) {
-                auto [dist, dir] = point_to_polygon(displacement, nfp);
-                if (dist > EPS) {
-                    // dir points from boundary TO displacement (inside NFP)
-                    // MTV should be opposite: from displacement TO boundary
-                    return (-dir).normalize() * dist;
-                }
-                return Vec2(0, 0);
-            }
-            // Outside NFP = no overlap
+        // Check overlap
+        if (!polygons_overlap(polyA, B_shifted)) {
             return Vec2(0, 0);
-        } else {
-            // SAT method for concave polygons
-            auto [has_overlap, mtv] = compute_mtv(polyA, B_shifted);
-            return has_overlap ? mtv : Vec2(0, 0);
         }
+
+        // Compute MTV
+        auto [has_overlap, mtv] = compute_mtv(polyA, B_shifted);
+        if (!has_overlap) return Vec2(0, 0);
+
+        return mtv;
     }
 };
 
@@ -346,9 +382,7 @@ int main() {
     cin.tie(nullptr);
 
     int n1, n2;
-    if (!(cin >> n1 >> n2)) {
-        return 0;
-    }
+    if (!(cin >> n1 >> n2)) return 0;
 
     Polygon polyA = read_polygon(cin, n1);
     Polygon polyB = read_polygon(cin, n2);
