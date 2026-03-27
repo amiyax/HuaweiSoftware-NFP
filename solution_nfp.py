@@ -155,7 +155,29 @@ def project_polygon(poly: Polygon, axis: Vector2D) -> Projection:
 
 # ============ SAT MTV 计算 ============
 
-def compute_mtv_sat(poly_a: Polygon, poly_b: Polygon) -> Tuple[bool, Vector2D]:
+def polygons_overlap(poly_a: Polygon, poly_b: Polygon) -> bool:
+    """Check if two polygons overlap using SAT"""
+    polygons = [poly_a, poly_b]
+    for poly in polygons:
+        for i in range(len(poly.vertices)):
+            p1 = poly.vertices[i]
+            p2 = poly.vertices[(i + 1) % len(poly.vertices)]
+            edge = p2 - p1
+            axis = edge.perp().normalize()
+
+            if axis.length_sq() < EPS * EPS:
+                continue
+
+            proj_a = project_polygon(poly_a, axis)
+            proj_b = project_polygon(poly_b, axis)
+
+            if proj_a.is_separated(proj_b):
+                return False
+
+    return True
+
+
+def compute_mtv_sat(poly_a: Polygon, poly_b: Polygon, validate: bool = True) -> Tuple[bool, Vector2D]:
     """
     使用分离轴定理计算MTV
     返回: (是否有重叠, 最小平移向量)
@@ -174,12 +196,13 @@ def compute_mtv_sat(poly_a: Polygon, poly_b: Polygon) -> Tuple[bool, Vector2D]:
 
             # 分离轴 = 边的法向量
             axis = edge.perp().normalize()
+            if axis.length_sq() < EPS * EPS:
+                continue
 
             proj_a = project_polygon(poly_a, axis)
             proj_b = project_polygon(poly_b, axis)
 
             if proj_a.is_separated(proj_b):
-                # 分离, 无重叠
                 return False, Vector2D(0, 0)
 
             overlap = proj_a.overlap(proj_b)
@@ -187,16 +210,32 @@ def compute_mtv_sat(poly_a: Polygon, poly_b: Polygon) -> Tuple[bool, Vector2D]:
                 continue
 
             # MTV distance: translation needed to separate
-            # MTV in positive axis direction = proj_a.max - proj_b.min
-            # MTV in negative axis direction = proj_b.max - proj_a.min
             mtv_pos = proj_a.max - proj_b.min  # translate B positive
             mtv_neg = proj_b.max - proj_a.min  # translate B negative
-            mtv_dist = min(mtv_pos, mtv_neg)
 
-            if mtv_dist > 0 and mtv_dist < min_mtv_dist:
-                min_mtv_dist = mtv_dist
-                # Choose direction: positive if A is "before" B, else negative
-                min_axis = axis if mtv_pos < mtv_neg else axis.negate()
+            if not validate:
+                mtv_dist = min(mtv_pos, mtv_neg)
+                if mtv_dist > 0 and mtv_dist < min_mtv_dist:
+                    min_mtv_dist = mtv_dist
+                    min_axis = axis if mtv_pos < mtv_neg else axis.negate()
+            else:
+                # Try positive direction (axis)
+                if mtv_pos > EPS:
+                    test_mtv = axis * mtv_pos
+                    test_b = poly_b.translate(test_mtv)
+                    if not polygons_overlap(poly_a, test_b):
+                        if mtv_pos < min_mtv_dist:
+                            min_mtv_dist = mtv_pos
+                            min_axis = axis
+
+                # Try negative direction (-axis)
+                if mtv_neg > EPS:
+                    test_mtv = axis.negate() * mtv_neg
+                    test_b = poly_b.translate(test_mtv)
+                    if not polygons_overlap(poly_a, test_b):
+                        if mtv_neg < min_mtv_dist:
+                            min_mtv_dist = mtv_neg
+                            min_axis = axis.negate()
 
     if min_mtv_dist == float('inf'):
         return False, Vector2D(0, 0)
@@ -394,12 +433,25 @@ class MTVSolver:
         # 平移B
         poly_b_shifted = self.poly_b.translate(displacement)
 
-        # SAT检测重叠
-        has_overlap, mtv = compute_mtv_sat(self.poly_a, poly_b_shifted)
+        # 先用简单SAT检查重叠和MTV（对凸多边形快速且正确）
+        has_overlap, mtv = compute_mtv_sat(self.poly_a, poly_b_shifted, validate=False)
 
         if not has_overlap:
             return Vector2D(0.0, 0.0)
 
+        # 验证MTV是否正确（对于凹多边形可能是必要的）
+        test_b = poly_b_shifted.translate(mtv)
+        if not polygons_overlap(self.poly_a, test_b):
+            return mtv
+
+        # MTV验证失败，尝试用A的边重新计算MTV
+        # 对于凹多边形，只使用A的边可能更稳定
+        has_overlap2, mtv2 = compute_mtv_sat(self.poly_a, poly_b_shifted, validate=True)
+
+        if has_overlap2:
+            return mtv2
+
+        # 如果仍然失败，返回原始MTV（可能会小一些但比没有好）
         return mtv
 
 

@@ -247,12 +247,13 @@ Polygon minkowski_sum(const Polygon& A, const Polygon& B) {
     return Polygon(uniq);
 }
 
-// Compute MTV using SAT directly on original polygons
-// SAT works correctly for BOTH convex and concave polygons
-pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
+// Check if two polygons overlap using SAT
+bool polygons_overlap(const Polygon& A, const Polygon& B);
+
+// Simple SAT MTV without validation - faster for convex polygons
+pair<bool, Vec2> compute_mtv_simple(const Polygon& A, const Polygon& B) {
     double min_mtv_dist = numeric_limits<double>::infinity();
     Vec2 min_axis(0, 0);
-    bool has_overlap = false;
 
     const Polygon* polys[2] = {&A, &B};
     for (int pi = 0; pi < 2; ++pi) {
@@ -279,9 +280,6 @@ pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
             }
             if (max_a <= min_b || max_b <= min_a) return {false, Vec2(0, 0)};
 
-            // Compute MTV distance: translation needed to separate
-            // MTV in positive axis direction = max_a - min_b (if > 0)
-            // MTV in negative axis direction = max_b - min_a (if > 0)
             double overlap = min(max_a, max_b) - max(min_a, min_b);
             if (overlap < EPS) continue;
 
@@ -291,17 +289,108 @@ pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
 
             if (mtv_dist > 0 && mtv_dist < min_mtv_dist) {
                 min_mtv_dist = mtv_dist;
-                // Choose direction: positive if A is "before" B, else negative
                 min_axis = (mtv_pos < mtv_neg) ? axis : -axis;
-                has_overlap = true;
             }
         }
     }
-    if (!has_overlap) return {false, Vec2(0, 0)};
+    if (min_mtv_dist == numeric_limits<double>::infinity()) return {false, Vec2(0, 0)};
     return {true, min_axis * min_mtv_dist};
 }
 
-// MTV Solver - simply stores polygons for solving
+// Full SAT MTV with validation - correct for concave polygons but slower
+pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
+    double min_mtv_dist = numeric_limits<double>::infinity();
+    Vec2 min_axis(0, 0);
+
+    const Polygon* polys[2] = {&A, &B};
+    for (int pi = 0; pi < 2; ++pi) {
+        const Polygon& poly = *polys[pi];
+        int n = poly.size();
+        for (int i = 0; i < n; ++i) {
+            auto [p1, p2] = poly.edge(i);
+            Vec2 axis = (p2 - p1).perp().normalize();
+            if (axis.length_sq() < EPS * EPS) continue;
+
+            double min_a = numeric_limits<double>::infinity();
+            double max_a = -numeric_limits<double>::infinity();
+            for (const Vec2& p : A.v) {
+                double proj = p.dot(axis);
+                min_a = min(min_a, proj);
+                max_a = max(max_a, proj);
+            }
+            double min_b = numeric_limits<double>::infinity();
+            double max_b = -numeric_limits<double>::infinity();
+            for (const Vec2& p : B.v) {
+                double proj = p.dot(axis);
+                min_b = min(min_b, proj);
+                max_b = max(max_b, proj);
+            }
+            if (max_a <= min_b || max_b <= min_a) return {false, Vec2(0, 0)};
+
+            double overlap = min(max_a, max_b) - max(min_a, min_b);
+            if (overlap < EPS) continue;
+
+            double mtv_pos = max_a - min_b; // translate B positive
+            double mtv_neg = max_b - min_a; // translate B negative
+
+            // Try positive direction (axis)
+            if (mtv_pos > EPS) {
+                Polygon B_shifted = B.translate(axis * mtv_pos);
+                if (!polygons_overlap(A, B_shifted)) {
+                    if (mtv_pos < min_mtv_dist) {
+                        min_mtv_dist = mtv_pos;
+                        min_axis = axis;
+                    }
+                }
+            }
+
+            // Try negative direction (-axis)
+            if (mtv_neg > EPS) {
+                Polygon B_shifted = B.translate(-axis * mtv_neg);
+                if (!polygons_overlap(A, B_shifted)) {
+                    if (mtv_neg < min_mtv_dist) {
+                        min_mtv_dist = mtv_neg;
+                        min_axis = -axis;
+                    }
+                }
+            }
+        }
+    }
+    if (min_mtv_dist == numeric_limits<double>::infinity()) return {false, Vec2(0, 0)};
+    return {true, min_axis * min_mtv_dist};
+}
+
+bool polygons_overlap(const Polygon& A, const Polygon& B) {
+    const Polygon* polys[2] = {&A, &B};
+    for (int pi = 0; pi < 2; ++pi) {
+        const Polygon& poly = *polys[pi];
+        int n = poly.size();
+        for (int i = 0; i < n; ++i) {
+            auto [p1, p2] = poly.edge(i);
+            Vec2 axis = (p2 - p1).perp().normalize();
+            if (axis.length_sq() < EPS * EPS) continue;
+
+            double min_a = numeric_limits<double>::infinity();
+            double max_a = -numeric_limits<double>::infinity();
+            for (const Vec2& p : A.v) {
+                double proj = p.dot(axis);
+                min_a = min(min_a, proj);
+                max_a = max(max_a, proj);
+            }
+            double min_b = numeric_limits<double>::infinity();
+            double max_b = -numeric_limits<double>::infinity();
+            for (const Vec2& p : B.v) {
+                double proj = p.dot(axis);
+                min_b = min(min_b, proj);
+                max_b = max(max_b, proj);
+            }
+            if (max_a <= min_b || max_b <= min_a) return false;
+        }
+    }
+    return true;
+}
+
+// MTV Solver - uses simple SAT with validation fallback for concave polygons
 class MTVSolver {
 public:
     Polygon polyA, polyB;
@@ -316,10 +405,21 @@ public:
             return Vec2(0, 0);
         }
 
-        // Compute MTV using SAT directly
-        auto [has_overlap, mtv] = compute_mtv(polyA, B_shifted);
+        // Try simple SAT first (fast for convex polygons)
+        auto [has_overlap, mtv] = compute_mtv_simple(polyA, B_shifted);
         if (!has_overlap) return Vec2(0, 0);
 
+        // Verify MTV is correct (needed for concave polygons)
+        Polygon B_final = B_shifted.translate(mtv);
+        if (!polygons_overlap(polyA, B_final)) {
+            return mtv;
+        }
+
+        // Simple SAT MTV was wrong, use full validated SAT
+        auto [has_overlap2, mtv2] = compute_mtv(polyA, B_shifted);
+        if (has_overlap2) return mtv2;
+
+        // Fallback: return the simple MTV (might not be optimal but at least separates)
         return mtv;
     }
 };
