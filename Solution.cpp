@@ -7,7 +7,7 @@
 #include <limits>
 using namespace std;
 
-const double EPS = 1e-8;
+const double EPS = 1e-7;
 const int OUTPUT_PRECISION = 5;
 
 struct Vec2 {
@@ -247,9 +247,6 @@ Polygon minkowski_sum(const Polygon& A, const Polygon& B) {
     return Polygon(uniq);
 }
 
-// Check if two polygons overlap using SAT
-bool polygons_overlap(const Polygon& A, const Polygon& B);
-
 // Simple SAT MTV without validation - faster for convex polygons
 pair<bool, Vec2> compute_mtv_simple(const Polygon& A, const Polygon& B) {
     double min_mtv_dist = numeric_limits<double>::infinity();
@@ -360,51 +357,78 @@ pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
     return {true, min_axis * min_mtv_dist};
 }
 
-// MTV Solver - uses simple SAT with validation fallback for concave polygons
+// MTV Solver - uses SAT with concave polygon decomposition
 class MTVSolver {
 public:
     Polygon polyA, polyB;
+    vector<Polygon> partsA, partsB;
 
-    MTVSolver(const Polygon& A, const Polygon& B) : polyA(A), polyB(B) {}
+    MTVSolver(const Polygon& A, const Polygon& B) : polyA(A), polyB(B) {
+        partsA = decompose_concave(A);
+        partsB = decompose_concave(B);
+    }
 
     Vec2 solve(const Vec2& displacement) {
         Polygon B_shifted = polyB.translate(displacement);
 
-        // Check overlap
+        // Check overall overlap
         if (!polygons_overlap(polyA, B_shifted)) {
             return Vec2(0, 0);
         }
 
-        // Try simple SAT first (fast for convex polygons)
-        auto [has_overlap, mtv] = compute_mtv_simple(polyA, B_shifted);
-        if (!has_overlap) return Vec2(0, 0);
+        // For each pair of convex parts, compute MTV and find minimum
+        double minDist = numeric_limits<double>::infinity();
+        Vec2 bestMTV(0, 0);
 
-        // Verify MTV is correct (needed for concave polygons)
-        Polygon B_final = B_shifted.translate(mtv);
-        if (!polygons_overlap(polyA, B_final)) {
-            return mtv;
+        for (const Polygon& partA : partsA) {
+            for (const Polygon& partB : partsB) {
+                Polygon partB_shifted = partB.translate(displacement);
+
+                if (!polygons_overlap(partA, partB_shifted)) {
+                    continue;
+                }
+
+                // Compute MTV for this pair
+                auto [hasOverlap, mtv] = compute_mtv_simple(partA, partB_shifted);
+                if (!hasOverlap) continue;
+
+                // Verify MTV
+                Polygon finalB = partB_shifted.translate(mtv);
+                if (!polygons_overlap(partA, finalB)) {
+                    double dist = mtv.length();
+                    if (dist < minDist) {
+                        minDist = dist;
+                        bestMTV = mtv;
+                    }
+                } else {
+                    // Try validated SAT
+                    auto [hasOverlap2, mtv2] = compute_mtv(partA, partB_shifted);
+                    if (hasOverlap2) {
+                        Polygon finalB2 = partB_shifted.translate(mtv2);
+                        if (!polygons_overlap(partA, finalB2)) {
+                            double dist = mtv2.length();
+                            if (dist < minDist) {
+                                minDist = dist;
+                                bestMTV = mtv2;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        // Simple SAT MTV was wrong, use full validated SAT
-        auto [has_overlap2, mtv2] = compute_mtv(polyA, B_shifted);
-        if (has_overlap2) return mtv2;
+        if (minDist == numeric_limits<double>::infinity()) {
+            // Fallback: try full validated SAT on original polygons
+            auto [hasOverlap, mtv] = compute_mtv(polyA, B_shifted);
+            if (hasOverlap) return mtv;
+            return Vec2(0, 0);
+        }
 
-        // Fallback: return the simple MTV (might not be optimal but at least separates)
-        return mtv;
+        return bestMTV;
     }
 };
 
 // ============ I/O ============
-
-bool try_read_ok(istream& in) {
-    int c = in.peek();
-    if (c == 'O' || c == 'o') {
-        string s;
-        in >> s;
-        return s == "OK";
-    }
-    return false;
-}
 
 Polygon read_polygon(istream& in, int n) {
     vector<Vec2> verts;
@@ -426,7 +450,10 @@ int main() {
 
     Polygon polyA = read_polygon(cin, n1);
     Polygon polyB = read_polygon(cin, n2);
-    try_read_ok(cin);
+
+    // Read OK after polygons
+    string s;
+    while (cin >> s && s != "OK" && s != "ok" && s != "OK\r") {}
 
     MTVSolver solver(polyA, polyB);
 
@@ -436,20 +463,16 @@ int main() {
     int m;
     cin >> m;
 
-    vector<Vec2> tests;
-    tests.reserve(m);
-    for (int i = 0; i < m; ++i) {
-        double x, y;
-        cin >> x >> y;
-        tests.emplace_back(x, y);
-    }
-
+    // Output m immediately as per protocol
     cout << setprecision(OUTPUT_PRECISION) << fixed;
     cout << m << endl;
     cout.flush();
 
+    // Read each test point, solve, and output immediately
     for (int i = 0; i < m; ++i) {
-        Vec2 res = solver.solve(tests[i]);
+        double x, y;
+        cin >> x >> y;
+        Vec2 res = solver.solve(Vec2(x, y));
         // Avoid -0.00000 by checking for near-zero
         double ox = fabs(res.x) < 1e-9 ? 0.0 : res.x;
         double oy = fabs(res.y) < 1e-9 ? 0.0 : res.y;
