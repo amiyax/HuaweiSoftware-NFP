@@ -250,7 +250,7 @@ Polygon minkowski_sum(const Polygon& A, const Polygon& B) {
 // Compute MTV using SAT directly on original polygons
 // SAT works correctly for BOTH convex and concave polygons
 pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
-    double min_overlap = numeric_limits<double>::infinity();
+    double min_mtv_dist = numeric_limits<double>::infinity();
     Vec2 min_axis(0, 0);
     bool has_overlap = false;
 
@@ -278,16 +278,27 @@ pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
                 max_b = max(max_b, proj);
             }
             if (max_a <= min_b || max_b <= min_a) return {false, Vec2(0, 0)};
+
+            // Compute MTV distance: translation needed to separate
+            // MTV in positive axis direction = max_a - min_b (if > 0)
+            // MTV in negative axis direction = max_b - min_a (if > 0)
             double overlap = min(max_a, max_b) - max(min_a, min_b);
-            if (overlap < min_overlap) {
-                min_overlap = overlap;
-                min_axis = axis;
+            if (overlap < EPS) continue;
+
+            double mtv_pos = max_a - min_b; // translate B positive
+            double mtv_neg = max_b - min_a; // translate B negative
+            double mtv_dist = min(mtv_pos, mtv_neg);
+
+            if (mtv_dist > 0 && mtv_dist < min_mtv_dist) {
+                min_mtv_dist = mtv_dist;
+                // Choose direction: positive if A is "before" B, else negative
+                min_axis = (mtv_pos < mtv_neg) ? axis : -axis;
                 has_overlap = true;
             }
         }
     }
     if (!has_overlap) return {false, Vec2(0, 0)};
-    return {true, min_axis * min_overlap};
+    return {true, min_axis * min_mtv_dist};
 }
 
 // MTV Solver - simply stores polygons for solving

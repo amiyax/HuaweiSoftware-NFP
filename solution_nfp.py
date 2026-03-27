@@ -55,6 +55,9 @@ class Vector2D:
         """逆时针法向量 (垂直向量)"""
         return Vector2D(-self.y, self.x)
 
+    def __neg__(self) -> 'Vector2D':
+        return Vector2D(-self.x, -self.y)
+
     def negate(self) -> 'Vector2D':
         return Vector2D(-self.x, -self.y)
 
@@ -158,7 +161,7 @@ def compute_mtv_sat(poly_a: Polygon, poly_b: Polygon) -> Tuple[bool, Vector2D]:
     返回: (是否有重叠, 最小平移向量)
     如果没有重叠, MTV为零向量
     """
-    min_overlap = float('inf')
+    min_mtv_dist = float('inf')
     min_axis = Vector2D(0, 0)
 
     polygons = [poly_a, poly_b]
@@ -180,19 +183,25 @@ def compute_mtv_sat(poly_a: Polygon, poly_b: Polygon) -> Tuple[bool, Vector2D]:
                 return False, Vector2D(0, 0)
 
             overlap = proj_a.overlap(proj_b)
-            if overlap < min_overlap:
-                min_overlap = overlap
-                min_axis = axis
+            if overlap < EPS:
+                continue
 
-    # 确定MTV方向(从A指向B)
-    center_a = poly_a.get_center()
-    center_b = poly_b.get_center()
-    dir_vec = center_b - center_a
+            # MTV distance: translation needed to separate
+            # MTV in positive axis direction = proj_a.max - proj_b.min
+            # MTV in negative axis direction = proj_b.max - proj_a.min
+            mtv_pos = proj_a.max - proj_b.min  # translate B positive
+            mtv_neg = proj_b.max - proj_a.min  # translate B negative
+            mtv_dist = min(mtv_pos, mtv_neg)
 
-    if min_axis.dot(dir_vec) < 0:
-        min_axis = min_axis.negate()
+            if mtv_dist > 0 and mtv_dist < min_mtv_dist:
+                min_mtv_dist = mtv_dist
+                # Choose direction: positive if A is "before" B, else negative
+                min_axis = axis if mtv_pos < mtv_neg else axis.negate()
 
-    return True, min_axis * min_overlap
+    if min_mtv_dist == float('inf'):
+        return False, Vector2D(0, 0)
+
+    return True, min_axis * min_mtv_dist
 
 
 def point_in_polygon(point: Vector2D, poly: Polygon) -> bool:
