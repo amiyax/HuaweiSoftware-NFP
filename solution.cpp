@@ -8,7 +8,7 @@
 using namespace std;
 
 const double EPS = 1e-10;
-const int OUTPUT_PRECISION = 10;
+const int OUTPUT_PRECISION = 5;
 
 struct Vec2 {
     double x, y;
