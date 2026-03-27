@@ -370,7 +370,10 @@ int main() {
 
     for (int i = 0; i < m; ++i) {
         Vec2 res = solver.solve(tests[i]);
-        cout << res.x << " " << res.y << endl;
+        // Avoid -0.00000 by checking for near-zero
+        double ox = fabs(res.x) < 1e-9 ? 0.0 : res.x;
+        double oy = fabs(res.y) < 1e-9 ? 0.0 : res.y;
+        cout << ox << " " << oy << endl;
         cout.flush();
     }
 
