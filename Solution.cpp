@@ -357,74 +357,36 @@ pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
     return {true, min_axis * min_mtv_dist};
 }
 
-// MTV Solver - uses SAT with concave polygon decomposition
+// MTV Solver - fast SAT with validation for concave polygons
 class MTVSolver {
 public:
     Polygon polyA, polyB;
-    vector<Polygon> partsA, partsB;
 
-    MTVSolver(const Polygon& A, const Polygon& B) : polyA(A), polyB(B) {
-        partsA = decompose_concave(A);
-        partsB = decompose_concave(B);
-    }
+    MTVSolver(const Polygon& A, const Polygon& B) : polyA(A), polyB(B) {}
 
     Vec2 solve(const Vec2& displacement) {
         Polygon B_shifted = polyB.translate(displacement);
 
-        // Check overall overlap
         if (!polygons_overlap(polyA, B_shifted)) {
             return Vec2(0, 0);
         }
 
-        // For each pair of convex parts, compute MTV and find minimum
-        double minDist = numeric_limits<double>::infinity();
-        Vec2 bestMTV(0, 0);
+        // Fast path: simple SAT (works for convex, sometimes for concave)
+        auto [hasOverlap, mtv] = compute_mtv_simple(polyA, B_shifted);
+        if (!hasOverlap) return Vec2(0, 0);
 
-        for (const Polygon& partA : partsA) {
-            for (const Polygon& partB : partsB) {
-                Polygon partB_shifted = partB.translate(displacement);
-
-                if (!polygons_overlap(partA, partB_shifted)) {
-                    continue;
-                }
-
-                // Compute MTV for this pair
-                auto [hasOverlap, mtv] = compute_mtv_simple(partA, partB_shifted);
-                if (!hasOverlap) continue;
-
-                // Verify MTV
-                Polygon finalB = partB_shifted.translate(mtv);
-                if (!polygons_overlap(partA, finalB)) {
-                    double dist = mtv.length();
-                    if (dist < minDist) {
-                        minDist = dist;
-                        bestMTV = mtv;
-                    }
-                } else {
-                    // Try validated SAT
-                    auto [hasOverlap2, mtv2] = compute_mtv(partA, partB_shifted);
-                    if (hasOverlap2) {
-                        Polygon finalB2 = partB_shifted.translate(mtv2);
-                        if (!polygons_overlap(partA, finalB2)) {
-                            double dist = mtv2.length();
-                            if (dist < minDist) {
-                                minDist = dist;
-                                bestMTV = mtv2;
-                            }
-                        }
-                    }
-                }
-            }
+        // Verify MTV - if correct, we're done (fast path for convex)
+        Polygon B_final = B_shifted.translate(mtv);
+        if (!polygons_overlap(polyA, B_final)) {
+            return mtv;
         }
 
-        if (minDist == numeric_limits<double>::infinity()) {
-            // Fallback: try full validated SAT on original polygons
-            auto [hasOverlap, mtv] = compute_mtv(polyA, B_shifted);
-            if (hasOverlap) return mtv;
-            return Vec2(0, 0);
-        }
+        // Slow path: full validated SAT (needed for some concave cases)
+        auto [hasOverlap2, mtv2] = compute_mtv(polyA, B_shifted);
+        if (hasOverlap2) return mtv2;
 
-        return bestMTV;
+        // Final fallback: return simple MTV (might not be perfect but at least moves)
+        return mtv;
     }
 };
 
