@@ -151,49 +151,7 @@ bool polygons_overlap(const Polygon& A, const Polygon& B) {
     return true;
 }
 
-// SAT MTV for convex polygons
-pair<bool, Vec2> compute_mtv_convex(const Polygon& A, const Polygon& B) {
-    double min_overlap = numeric_limits<double>::infinity();
-    Vec2 min_axis(0, 0);
-    bool has_overlap = false;
-
-    const Polygon* polys[2] = {&A, &B};
-    for (int pi = 0; pi < 2; ++pi) {
-        const Polygon& poly = *polys[pi];
-        int n = poly.size();
-        for (int i = 0; i < n; ++i) {
-            auto [p1, p2] = poly.edge(i);
-            Vec2 axis = (p2 - p1).perp().normalize();
-            if (axis.length_sq() < EPS * EPS) continue;
-
-            double min_a = numeric_limits<double>::infinity();
-            double max_a = -numeric_limits<double>::infinity();
-            for (const Vec2& p : A.v) {
-                double proj = p.dot(axis);
-                min_a = min(min_a, proj);
-                max_a = max(max_a, proj);
-            }
-            double min_b = numeric_limits<double>::infinity();
-            double max_b = -numeric_limits<double>::infinity();
-            for (const Vec2& p : B.v) {
-                double proj = p.dot(axis);
-                min_b = min(min_b, proj);
-                max_b = max(max_b, proj);
-            }
-            if (max_a <= min_b || max_b <= min_a) return {false, Vec2(0, 0)};
-            double overlap = min(max_a, max_b) - max(min_a, min_b);
-            if (overlap < min_overlap) {
-                min_overlap = overlap;
-                min_axis = axis;
-                has_overlap = true;
-            }
-        }
-    }
-    if (!has_overlap) return {false, Vec2(0, 0)};
-    return {true, min_axis * min_overlap};
-}
-
-// Ear clipping decomposition for concave polygons
+// Ear clipping decomposition for concave polygons (unused but kept for reference)
 vector<Polygon> decompose_concave(const Polygon& poly) {
     vector<Polygon> result;
     if (poly.size() <= 3) {
@@ -289,54 +247,55 @@ Polygon minkowski_sum(const Polygon& A, const Polygon& B) {
     return Polygon(uniq);
 }
 
-// Compute MTV for potentially concave polygons using SAT
-// For concave polygons, SAT gives correct overlap detection but
-// we need to find the TRUE MTV direction by checking edge projections
+// Compute MTV using SAT directly on original polygons
+// SAT works correctly for BOTH convex and concave polygons
 pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
-    // Quick check: if either is concave, use detailed analysis
-    if (!is_convex(A) || !is_convex(B)) {
-        // Decompose and check overlap between convex parts
-        vector<Polygon> decompA = decompose_concave(A);
-        vector<Polygon> decompB = decompose_concave(B);
+    double min_overlap = numeric_limits<double>::infinity();
+    Vec2 min_axis(0, 0);
+    bool has_overlap = false;
 
-        double best_overlap = numeric_limits<double>::infinity();
-        Vec2 best_axis(0, 0);
-        bool any_overlap = false;
+    const Polygon* polys[2] = {&A, &B};
+    for (int pi = 0; pi < 2; ++pi) {
+        const Polygon& poly = *polys[pi];
+        int n = poly.size();
+        for (int i = 0; i < n; ++i) {
+            auto [p1, p2] = poly.edge(i);
+            Vec2 axis = (p2 - p1).perp().normalize();
+            if (axis.length_sq() < EPS * EPS) continue;
 
-        // Check all pairs of convex parts
-        for (const Polygon& Ai : decompA) {
-            for (const Polygon& Bj : decompB) {
-                auto [has_ov, mtv] = compute_mtv_convex(Ai, Bj);
-                if (!has_ov) continue;
-                any_overlap = true;
-                double ov = mtv.length();
-                if (ov < best_overlap) {
-                    best_overlap = ov;
-                    best_axis = ov > EPS ? mtv.normalize() : Vec2(0, 0);
-                }
+            double min_a = numeric_limits<double>::infinity();
+            double max_a = -numeric_limits<double>::infinity();
+            for (const Vec2& p : A.v) {
+                double proj = p.dot(axis);
+                min_a = min(min_a, proj);
+                max_a = max(max_a, proj);
+            }
+            double min_b = numeric_limits<double>::infinity();
+            double max_b = -numeric_limits<double>::infinity();
+            for (const Vec2& p : B.v) {
+                double proj = p.dot(axis);
+                min_b = min(min_b, proj);
+                max_b = max(max_b, proj);
+            }
+            if (max_a <= min_b || max_b <= min_a) return {false, Vec2(0, 0)};
+            double overlap = min(max_a, max_b) - max(min_a, min_b);
+            if (overlap < min_overlap) {
+                min_overlap = overlap;
+                min_axis = axis;
+                has_overlap = true;
             }
         }
-
-        if (!any_overlap) return {false, Vec2(0, 0)};
-        return {true, best_axis * best_overlap};
     }
-
-    return compute_mtv_convex(A, B);
+    if (!has_overlap) return {false, Vec2(0, 0)};
+    return {true, min_axis * min_overlap};
 }
 
-// MTV Solver with preprocessing
+// MTV Solver - simply stores polygons for solving
 class MTVSolver {
 public:
     Polygon polyA, polyB;
-    bool a_convex, b_convex;
-    vector<Polygon> decompA, decompB;
 
-    MTVSolver(const Polygon& A, const Polygon& B) : polyA(A), polyB(B) {
-        a_convex = is_convex(A);
-        b_convex = is_convex(B);
-        if (!a_convex) decompA = decompose_concave(A);
-        if (!b_convex) decompB = decompose_concave(B);
-    }
+    MTVSolver(const Polygon& A, const Polygon& B) : polyA(A), polyB(B) {}
 
     Vec2 solve(const Vec2& displacement) {
         Polygon B_shifted = polyB.translate(displacement);
@@ -346,7 +305,7 @@ public:
             return Vec2(0, 0);
         }
 
-        // Compute MTV
+        // Compute MTV using SAT directly
         auto [has_overlap, mtv] = compute_mtv(polyA, B_shifted);
         if (!has_overlap) return Vec2(0, 0);
 
