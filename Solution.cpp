@@ -360,36 +360,6 @@ pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
     return {true, min_axis * min_mtv_dist};
 }
 
-bool polygons_overlap(const Polygon& A, const Polygon& B) {
-    const Polygon* polys[2] = {&A, &B};
-    for (int pi = 0; pi < 2; ++pi) {
-        const Polygon& poly = *polys[pi];
-        int n = poly.size();
-        for (int i = 0; i < n; ++i) {
-            auto [p1, p2] = poly.edge(i);
-            Vec2 axis = (p2 - p1).perp().normalize();
-            if (axis.length_sq() < EPS * EPS) continue;
-
-            double min_a = numeric_limits<double>::infinity();
-            double max_a = -numeric_limits<double>::infinity();
-            for (const Vec2& p : A.v) {
-                double proj = p.dot(axis);
-                min_a = min(min_a, proj);
-                max_a = max(max_a, proj);
-            }
-            double min_b = numeric_limits<double>::infinity();
-            double max_b = -numeric_limits<double>::infinity();
-            for (const Vec2& p : B.v) {
-                double proj = p.dot(axis);
-                min_b = min(min_b, proj);
-                max_b = max(max_b, proj);
-            }
-            if (max_a <= min_b || max_b <= min_a) return false;
-        }
-    }
-    return true;
-}
-
 // MTV Solver - uses simple SAT with validation fallback for concave polygons
 class MTVSolver {
 public:
