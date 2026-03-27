@@ -10,7 +10,7 @@ import sys
 import math
 from typing import List, Tuple, Optional
 
-EPS = 1e-9
+EPS = 1e-8
 
 # ============ 基础几何工具 ============
 

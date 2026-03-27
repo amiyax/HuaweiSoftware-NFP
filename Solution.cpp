@@ -7,7 +7,7 @@
 #include <limits>
 using namespace std;
 
-const double EPS = 1e-10;
+const double EPS = 1e-8;
 const int OUTPUT_PRECISION = 5;
 
 struct Vec2 {
@@ -473,7 +473,6 @@ int main() {
         cin >> x >> y;
         tests.emplace_back(x, y);
     }
-    try_read_ok(cin);
 
     cout << setprecision(OUTPUT_PRECISION) << fixed;
     cout << m << endl;
