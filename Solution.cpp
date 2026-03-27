@@ -26,6 +26,7 @@ struct Vector2D {
         return Vector2D(x / len, y / len);
     }
     Vector2D Perp() const { return Vector2D(-y, x); }
+    Vector2D operator-() const { return Vector2D(-x, -y); }
 };
 
 struct AABB {
@@ -63,6 +64,7 @@ struct Polygon {
     vector<Vector2D> v;
     Polygon() {}
     Polygon(initializer_list<Vector2D> verts) : v(verts) {}
+    explicit Polygon(const vector<Vector2D>& verts) : v(verts) {}
     int size() const { return (int)v.size(); }
     Vector2D operator[](int i) const { return v[i]; }
     Vector2D get_center() const {
