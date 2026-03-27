@@ -93,3 +93,46 @@ pair<bool, Vec2> compute_mtv(const Polygon& A, const Polygon& B) {
 - SAT MTV 不能简单用 overlap，要用 gap + overlap
 - Python 验证发现了 C++ 算法错误
 - 测试用例验证是调试算法的关键
+
+## Bug 3: SAT 对凹多边形MTV方向错误 (已修复)
+**发现日期**: 2026-03-27
+**问题**: 简单SAT对凹多边形返回的MTV方向可能错误（指向内部而非外部）
+**原因**: 凹多边形的部分边法向量指向内部，min(mtv_pos, mtv_neg)可能选择错误方向
+**验证**: practice_3 (凹多边形B, 172顶点) 测试10000个位移，简单SAT有2432个失败
+**修复**: 添加MTV验证 - 对每个MTV候选，验证其是否真正分离多边形
+**修复后**: 10000个测试全部通过
+
+### Python验证代码
+```python
+def compute_mtv_sat(poly_a, poly_b, validate=True):
+    # ... 对每个轴 ...
+    mtv_pos = proj_a.max - proj_b.min  # 沿正轴分离
+    mtv_neg = proj_b.max - proj_a.min  # 沿负轴分离
+
+    if not validate:
+        # 简单SAT：对凹多边形可能错误
+        mtv_dist = min(mtv_pos, mtv_neg)
+        ...
+    else:
+        # 验证MTV是否真正分离
+        if mtv_pos > EPS:
+            test_b = poly_b.translate(axis * mtv_pos)
+            if not polygons_overlap(poly_a, test_b):
+                # 验证通过，使用此MTV
+                ...
+
+        if mtv_neg > EPS:
+            test_b = poly_b.translate(-axis * mtv_neg)
+            if not polygons_overlap(poly_a, test_b):
+                ...
+```
+
+### 两阶段策略 (更高效)
+1. 先用简单SAT (validate=False) 计算MTV
+2. 验证MTV是否真正分离
+3. 如果验证失败，用完整验证SAT重新计算
+
+### 性能
+- Python: ~209秒处理10000个凹多边形测试 (48 tests/sec)
+- C++: 预计<1秒 (原生编译)
+- 优化策略有效: 大部分测试用例(凸多边形)使用快速简单SAT
