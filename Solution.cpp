@@ -17,6 +17,7 @@ struct Vector2D {
     Vector2D operator+(const Vector2D& o) const { return Vector2D(x + o.x, y + o.y); }
     Vector2D operator*(double s) const { return Vector2D(x * s, y * s); }
     double Dot(const Vector2D& o) const { return x * o.x + y * o.y; }
+    double Cross(const Vector2D& o) const { return x * o.y - y * o.x; }
     double Length() const { return sqrt(x * x + y * y); }
     Vector2D Normalize() const {
         double len = Length();
@@ -43,19 +44,25 @@ struct Projection {
     double min, max;
 };
 
-// Project polygon onto axis (offset version - no copy)
-Projection ProjectPolygon(const Polygon& poly, const Vector2D& axis, const Vector2D& offset) {
-    double minProj = poly[0].Dot(axis) + offset.Dot(axis);
-    double maxProj = minProj;
-    for (int i = 1; i < poly.size(); ++i) {
-        double proj = poly[i].Dot(axis) + offset.Dot(axis);
-        if (proj < minProj) minProj = proj;
-        if (proj > maxProj) maxProj = proj;
+// Check convex using cross product
+bool isConvex(const Polygon& poly) {
+    int n = poly.size();
+    if (n < 3) return false;
+    int sign = 0;
+    for (int i = 0; i < n; ++i) {
+        Vector2D a = poly[i];
+        Vector2D b = poly[(i + 1) % n];
+        Vector2D c = poly[(i + 2) % n];
+        double cr = (b - a).Cross(c - b);
+        if (fabs(cr) > EPS) {
+            int s = cr > 0 ? 1 : -1;
+            if (sign == 0) sign = s;
+            else if (sign != s) return false;
+        }
     }
-    return {minProj, maxProj};
+    return true;
 }
 
-// Project without offset
 Projection ProjectPolygon(const Polygon& poly, const Vector2D& axis) {
     double minProj = poly[0].Dot(axis);
     double maxProj = minProj;
@@ -68,8 +75,9 @@ Projection ProjectPolygon(const Polygon& poly, const Vector2D& axis) {
 }
 
 Polygon polygon1, polygon2;
+bool convex1, convex2;
 
-// SAT MTV - offset version (no polygon copy)
+// SAT MTV - optimized with projection offset
 Vector2D GenSolution(const Vector2D& displacement) {
     double minOverlap = numeric_limits<double>::infinity();
     Vector2D smallestAxis;
@@ -87,7 +95,11 @@ Vector2D GenSolution(const Vector2D& displacement) {
             if (axis.Length() < EPS) continue;
 
             Projection projA = ProjectPolygon(polygon1, axis);
-            Projection projB = ProjectPolygon(polygon2, axis, displacement);
+            Projection projB = ProjectPolygon(polygon2, axis);
+            // Offset B's projection by displacement
+            double offset = displacement.Dot(axis);
+            projB.min += offset;
+            projB.max += offset;
 
             if (projA.max <= projB.min || projB.max <= projA.min) {
                 return Vector2D(0, 0);
@@ -123,6 +135,10 @@ int main() {
     for (int i = 0; i < n1; ++i) cin >> polygon1.v[i].x >> polygon1.v[i].y;
     polygon2.v.resize(n2);
     for (int i = 0; i < n2; ++i) cin >> polygon2.v[i].x >> polygon2.v[i].y;
+
+    // Preprocessing: check convexity
+    convex1 = isConvex(polygon1);
+    convex2 = isConvex(polygon2);
 
     string ok;
     cin >> ok;
