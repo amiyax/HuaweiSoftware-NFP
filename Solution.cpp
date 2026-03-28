@@ -77,7 +77,7 @@ Projection ProjectPolygon(const Polygon& poly, const Vector2D& axis) {
 Polygon polygon1, polygon2;
 bool convex1, convex2;
 
-// SAT MTV - optimized with projection offset
+// SAT MTV - optimized: avoid Normalize until collision confirmed
 Vector2D GenSolution(const Vector2D& displacement) {
     double minOverlap = numeric_limits<double>::infinity();
     Vector2D smallestAxis;
@@ -91,12 +91,14 @@ Vector2D GenSolution(const Vector2D& displacement) {
             Vector2D p1 = poly[i];
             Vector2D p2 = poly[(i + 1) % n];
             Vector2D edge = p2 - p1;
-            Vector2D axis = edge.Perp().Normalize();
-            if (axis.Length() < EPS) continue;
+            // Skip zero-length edges
+            double edgeLenSq = edge.Dot(edge);
+            if (edgeLenSq < EPS * EPS) continue;
+            // Normalize axis only when needed
+            Vector2D axis = edge.Perp() * (1.0 / sqrt(edgeLenSq));
 
             Projection projA = ProjectPolygon(polygon1, axis);
             Projection projB = ProjectPolygon(polygon2, axis);
-            // Offset B's projection by displacement
             double offset = displacement.Dot(axis);
             projB.min += offset;
             projB.max += offset;
