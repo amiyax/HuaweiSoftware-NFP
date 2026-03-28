@@ -10,6 +10,25 @@ using namespace std;
 
 const double EPS = 1e-6;
 
+struct AABB {
+    double minX, maxX, minY, maxY;
+    AABB() : minX(numeric_limits<double>::infinity()), maxX(-numeric_limits<double>::infinity()),
+             minY(numeric_limits<double>::infinity()), maxY(-numeric_limits<double>::infinity()) {}
+    static AABB FromPolygon(const Polygon& poly) {
+        AABB a;
+        for (auto& p : poly.v) {
+            a.minX = min(a.minX, p.x);
+            a.maxX = max(a.maxX, p.x);
+            a.minY = min(a.minY, p.y);
+            a.maxY = max(a.maxY, p.y);
+        }
+        return a;
+    }
+    bool overlaps(const AABB& o) const {
+        return !(maxX < o.minX || o.maxX < minX || maxY < o.minY || o.maxY < minY);
+    }
+};
+
 struct Vector2D {
     double x, y;
     Vector2D(double x_ = 0, double y_ = 0) : x(x_), y(y_) {}
@@ -19,11 +38,6 @@ struct Vector2D {
     double Dot(const Vector2D& o) const { return x * o.x + y * o.y; }
     double Cross(const Vector2D& o) const { return x * o.y - y * o.x; }
     double Length() const { return sqrt(x * x + y * y); }
-    Vector2D Normalize() const {
-        double len = Length();
-        if (len < EPS) return Vector2D(0, 0);
-        return Vector2D(x / len, y / len);
-    }
     Vector2D Perp() const { return Vector2D(-y, x); }
 };
 
@@ -75,10 +89,18 @@ Projection ProjectPolygon(const Polygon& poly, const Vector2D& axis) {
 }
 
 Polygon polygon1, polygon2;
+AABB aabb1, aabb2;
 bool convex1, convex2;
 
 // SAT MTV - optimized: avoid Normalize until collision confirmed
 Vector2D GenSolution(const Vector2D& displacement) {
+    // Broad phase: AABB check
+    AABB aabb2_shifted{aabb2.minX + displacement.x, aabb2.maxX + displacement.x,
+                       aabb2.minY + displacement.y, aabb2.maxY + displacement.y};
+    if (!aabb1.overlaps(aabb2_shifted)) {
+        return Vector2D(0, 0);
+    }
+
     double minOverlap = numeric_limits<double>::infinity();
     Vector2D smallestAxis;
 
@@ -138,9 +160,11 @@ int main() {
     polygon2.v.resize(n2);
     for (int i = 0; i < n2; ++i) cin >> polygon2.v[i].x >> polygon2.v[i].y;
 
-    // Preprocessing: check convexity
+    // Preprocessing: check convexity and AABB
     convex1 = isConvex(polygon1);
     convex2 = isConvex(polygon2);
+    aabb1 = AABB::FromPolygon(polygon1);
+    aabb2 = AABB::FromPolygon(polygon2);
 
     string ok;
     cin >> ok;
