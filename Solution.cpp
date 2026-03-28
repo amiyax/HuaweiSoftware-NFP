@@ -95,8 +95,11 @@ bool convex1, convex2;
 // SAT MTV - optimized: avoid Normalize until collision confirmed
 Vector2D GenSolution(const Vector2D& displacement) {
     // Broad phase: AABB check
-    AABB aabb2_shifted{aabb2.minX + displacement.x, aabb2.maxX + displacement.x,
-                       aabb2.minY + displacement.y, aabb2.maxY + displacement.y};
+    AABB aabb2_shifted;
+    aabb2_shifted.minX = aabb2.minX + displacement.x;
+    aabb2_shifted.maxX = aabb2.maxX + displacement.x;
+    aabb2_shifted.minY = aabb2.minY + displacement.y;
+    aabb2_shifted.maxY = aabb2.maxY + displacement.y;
     if (!aabb1.overlaps(aabb2_shifted)) {
         return Vector2D(0, 0);
     }
