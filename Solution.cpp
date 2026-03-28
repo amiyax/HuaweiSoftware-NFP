@@ -10,25 +10,6 @@ using namespace std;
 
 const double EPS = 1e-6;
 
-struct AABB {
-    double minX, maxX, minY, maxY;
-    AABB() : minX(numeric_limits<double>::infinity()), maxX(-numeric_limits<double>::infinity()),
-             minY(numeric_limits<double>::infinity()), maxY(-numeric_limits<double>::infinity()) {}
-    static AABB FromPolygon(const Polygon& poly) {
-        AABB a;
-        for (auto& p : poly.v) {
-            a.minX = min(a.minX, p.x);
-            a.maxX = max(a.maxX, p.x);
-            a.minY = min(a.minY, p.y);
-            a.maxY = max(a.maxY, p.y);
-        }
-        return a;
-    }
-    bool overlaps(const AABB& o) const {
-        return !(maxX < o.minX || o.maxX < minX || maxY < o.minY || o.maxY < minY);
-    }
-};
-
 struct Vector2D {
     double x, y;
     Vector2D(double x_ = 0, double y_ = 0) : x(x_), y(y_) {}
@@ -54,11 +35,40 @@ struct Polygon {
     }
 };
 
+struct AABB {
+    double minX, maxX, minY, maxY;
+    AABB() : minX(numeric_limits<double>::infinity()), maxX(-numeric_limits<double>::infinity()),
+             minY(numeric_limits<double>::infinity()), maxY(-numeric_limits<double>::infinity()) {}
+    static AABB FromPolygon(const Polygon& poly) {
+        AABB a;
+        for (auto& p : poly.v) {
+            a.minX = min(a.minX, p.x);
+            a.maxX = max(a.maxX, p.x);
+            a.minY = min(a.minY, p.y);
+            a.maxY = max(a.maxY, p.y);
+        }
+        return a;
+    }
+    bool overlaps(const AABB& o) const {
+        return !(maxX < o.minX || o.maxX < minX || maxY < o.minY || o.maxY < minY);
+    }
+};
+
 struct Projection {
     double min, max;
 };
 
-// Check convex using cross product
+Projection ProjectPolygon(const Polygon& poly, const Vector2D& axis) {
+    double minProj = poly[0].Dot(axis);
+    double maxProj = minProj;
+    for (int i = 1; i < poly.size(); ++i) {
+        double proj = poly[i].Dot(axis);
+        if (proj < minProj) minProj = proj;
+        if (proj > maxProj) maxProj = proj;
+    }
+    return {minProj, maxProj};
+}
+
 bool isConvex(const Polygon& poly) {
     int n = poly.size();
     if (n < 3) return false;
@@ -77,22 +87,9 @@ bool isConvex(const Polygon& poly) {
     return true;
 }
 
-Projection ProjectPolygon(const Polygon& poly, const Vector2D& axis) {
-    double minProj = poly[0].Dot(axis);
-    double maxProj = minProj;
-    for (int i = 1; i < poly.size(); ++i) {
-        double proj = poly[i].Dot(axis);
-        if (proj < minProj) minProj = proj;
-        if (proj > maxProj) maxProj = proj;
-    }
-    return {minProj, maxProj};
-}
-
 Polygon polygon1, polygon2;
 AABB aabb1, aabb2;
-bool convex1, convex2;
 
-// SAT MTV - optimized: avoid Normalize until collision confirmed
 Vector2D GenSolution(const Vector2D& displacement) {
     // Broad phase: AABB check
     AABB aabb2_shifted;
@@ -116,10 +113,8 @@ Vector2D GenSolution(const Vector2D& displacement) {
             Vector2D p1 = poly[i];
             Vector2D p2 = poly[(i + 1) % n];
             Vector2D edge = p2 - p1;
-            // Skip zero-length edges
             double edgeLenSq = edge.Dot(edge);
             if (edgeLenSq < EPS * EPS) continue;
-            // Normalize axis only when needed
             Vector2D axis = edge.Perp() * (1.0 / sqrt(edgeLenSq));
 
             Projection projA = ProjectPolygon(polygon1, axis);
@@ -163,9 +158,6 @@ int main() {
     polygon2.v.resize(n2);
     for (int i = 0; i < n2; ++i) cin >> polygon2.v[i].x >> polygon2.v[i].y;
 
-    // Preprocessing: check convexity and AABB
-    convex1 = isConvex(polygon1);
-    convex2 = isConvex(polygon2);
     aabb1 = AABB::FromPolygon(polygon1);
     aabb2 = AABB::FromPolygon(polygon2);
 
